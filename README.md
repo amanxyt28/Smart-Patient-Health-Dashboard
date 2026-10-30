@@ -2,7 +2,7 @@
 
 ## 🚀 Live Demo
 
-🌐 **[Click Here to View Live Dashboard](https://amanxyt28-smart-patient-health-dashboard-app-lvcgdd.streamlit.app)**
+🌐 **[Click Here to View Live Dashboard](https://amanxyt28-smart-patient-health-dashboard-app-lycgdd.streamlit.app)**
 
 ## 📌 Project Overview
 
