@@ -1,11 +1,22 @@
+import logging
 import os
+import tempfile
 import joblib
 import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+from pathlib import Path
 
-# PAGE Configure
+from health_utils import (
+    build_prediction_frame,
+    download_verified_artifact,
+    filter_patient_records,
+    paginate_frame,
+    sha256_file,
+)
+
+# PAGE CONFIG
 st.set_page_config(
     page_title="Patient Health Record Dashboard",
     page_icon="🏥",
@@ -13,79 +24,47 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-DATA_PATH = os.path.join(
-    "data",
-    "patients_data_with_alerts(2).xlsx"
-)
+BASE_DIR = Path(__file__).resolve().parent
+DATA_PATH = BASE_DIR / "data" / "patients_data_with_alerts(2).xlsx"
+MODEL_PATH = BASE_DIR / "model" / "random_forest_model.pkl"
+FEATURE_PATH = BASE_DIR / "model" / "model_features.pkl"
+LOGGER = logging.getLogger(__name__)
 
-MODEL_PATH = os.path.join(
-    "model",
-    "random_forest_model.pkl"
-)
 
-FEATURE_PATH = os.path.join(
-    "model",
-    "model_features.pkl"
-)
+def get_deployment_setting(name):
+    try:
+        return st.secrets.get(name) or os.getenv(name)
+    except FileNotFoundError:
+        return os.getenv(name)
 
-# CUSTOM CSS
 
-st.markdown("""
-<style>
+def get_model_path():
+    if MODEL_PATH.is_file():
+        return MODEL_PATH
 
-.block-container {
-    padding-top: 1.5rem;
-    padding-bottom: 2rem;
-}
+    model_url = get_deployment_setting("MODEL_URL")
+    model_sha256 = get_deployment_setting("MODEL_SHA256")
+    if not model_url or not model_sha256:
+        raise FileNotFoundError(
+            "Set MODEL_URL and MODEL_SHA256 in Streamlit secrets to enable predictions."
+        )
 
-.main-title {
-    font-size: 38px;
-    font-weight: 700;
-    margin-bottom: 0px;
-}
-
-.subtitle {
-    color: #8b949e;
-    font-size: 16px;
-    margin-bottom: 25px;
-}
-
-.section-title {
-    font-size: 25px;
-    font-weight: 650;
-    margin-top: 10px;
-    margin-bottom: 15px;
-}
-
-.metric-card {
-    padding: 10px;
-}
-
-div[data-testid="stMetric"] {
-    border-radius: 12px;
-    padding: 15px;
-    border: 1px solid rgba(128,128,128,0.20);
-}
-
-.alert-box {
-    padding: 15px;
-    border-radius: 10px;
-    margin-bottom: 10px;
-}
-
-.footer {
-    text-align: center;
-    color: #888;
-    padding: 30px;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
+    cached_path = (
+        Path(tempfile.gettempdir())
+        / "patient-health-dashboard"
+        / "random_forest_model.pkl"
+    )
+    if not cached_path.is_file() or sha256_file(cached_path) != model_sha256.lower():
+        return download_verified_artifact(
+            model_url,
+            model_sha256,
+            cached_path,
+        )
+    return cached_path
 
 # LOAD DATA
 
-@st.cache_data
+@st.cache_data(max_entries=2)
 def load_data():
 
     data = pd.read_excel(DATA_PATH)
@@ -98,12 +77,12 @@ def load_data():
 
 # LOAD MODEL ONLY WHEN REQUIRED
 
-@st.cache_resource
+@st.cache_resource(max_entries=1)
 def load_ml_model():
 
-    model = joblib.load(MODEL_PATH)
+    model = joblib.load(get_model_path())
 
-    if os.path.exists(FEATURE_PATH):
+    if FEATURE_PATH.exists():
         features = joblib.load(FEATURE_PATH)
     else:
         features = [
@@ -119,7 +98,7 @@ def load_ml_model():
 
 # FILE CHECK
 
-if not os.path.exists(DATA_PATH):
+if not DATA_PATH.exists():
 
     st.error(
         f"""
@@ -194,6 +173,12 @@ TEMP_COL = find_column([
     "Body_Temperature"
 ])
 
+ACCURACY_COL = find_column([
+    "Data Accuracy (%)",
+    "Data Accuracy",
+    "Data_Accuracy"
+])
+
 DISEASE_COL = find_column([
     "Predicted Disease",
     "Disease",
@@ -210,17 +195,8 @@ FALL_COL = find_column([
 
 # HEADER
 
-st.markdown(
-    '<div class="main-title">🏥 Patient Health Record Dashboard</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    '<div class="subtitle">'
-    'Data Science Based Healthcare Analytics & Monitoring System'
-    '</div>',
-    unsafe_allow_html=True
-)
+st.title("Patient Health Record Dashboard")
+st.caption("Data science based healthcare analytics and monitoring system")
 
 
 # SIDEBAR
@@ -255,7 +231,7 @@ st.sidebar.caption(
 
 # FILTER FUNCTION
 
-filtered_df = df.copy()
+filtered_df = df
 
 if DISEASE_COL is not None:
 
@@ -272,9 +248,9 @@ if DISEASE_COL is not None:
         default=diseases
     )
 
-    if selected_diseases:
+    if selected_diseases and len(selected_diseases) < len(diseases):
 
-        filtered_df = filtered_df[
+        filtered_df = filtered_df.loc[
             filtered_df[DISEASE_COL]
             .astype(str)
             .isin(selected_diseases)
@@ -285,10 +261,7 @@ if DISEASE_COL is not None:
 
 if page == "📊 Dashboard Overview":
 
-    st.markdown(
-        '<div class="section-title">📊 Healthcare Overview</div>',
-        unsafe_allow_html=True
-    )
+    st.header("Healthcare overview")
 
     st.write(
         "Interactive summary of the available patient health records."
@@ -380,7 +353,7 @@ if page == "📊 Dashboard Overview":
 
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                width="stretch"
             )
 
         with col2:
@@ -395,7 +368,7 @@ if page == "📊 Dashboard Overview":
 
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                width="stretch"
             )
 
     # VITAL SUMMARY
@@ -443,7 +416,7 @@ if page == "📊 Dashboard Overview":
 
         st.dataframe(
             stats,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -452,10 +425,7 @@ if page == "📊 Dashboard Overview":
 
 elif page == "🔎 Patient Explorer":
 
-    st.markdown(
-        '<div class="section-title">🔎 Patient Explorer</div>',
-        unsafe_allow_html=True
-    )
+    st.header("Patient explorer")
 
     if PATIENT_COL is None:
 
@@ -465,22 +435,25 @@ elif page == "🔎 Patient Explorer":
 
     else:
 
-        patient_ids = (
-            df[PATIENT_COL]
-            .dropna()
-            .astype(str)
-            .unique()
-        )
+        with st.form("patient_search"):
+            selected_patient = st.text_input(
+                "Patient number",
+                placeholder="Enter a patient number",
+            )
+            patient_submitted = st.form_submit_button("Find patient")
 
-        selected_patient = st.selectbox(
-            "Select Patient",
-            sorted(patient_ids)
-        )
-
-        patient = df[
-            df[PATIENT_COL].astype(str)
-            == selected_patient
-        ]
+        patient = df.iloc[0:0]
+        if patient_submitted:
+            if selected_patient.strip():
+                patient = filter_patient_records(
+                    df,
+                    PATIENT_COL,
+                    selected_patient,
+                )
+                if patient.empty:
+                    st.warning("No record was found for that patient number.")
+            else:
+                st.warning("Enter a patient number to search.")
 
         if not patient.empty:
 
@@ -542,7 +515,7 @@ elif page == "🔎 Patient Explorer":
 
             st.dataframe(
                 patient.T,
-                use_container_width=True
+                width="stretch"
             )
 
 
@@ -550,10 +523,7 @@ elif page == "🔎 Patient Explorer":
 
 elif page == "❤️ Vital Analytics":
 
-    st.markdown(
-        '<div class="section-title">❤️ Vital Sign Analytics</div>',
-        unsafe_allow_html=True
-    )
+    st.header("Vital sign analytics")
 
     vital_options = []
 
@@ -596,7 +566,7 @@ elif page == "❤️ Vital Analytics":
 
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                width="stretch"
             )
 
         with col2:
@@ -609,7 +579,7 @@ elif page == "❤️ Vital Analytics":
 
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                width="stretch"
             )
 
         st.subheader("📈 Statistics")
@@ -618,7 +588,7 @@ elif page == "❤️ Vital Analytics":
             filtered_df[selected_vital]
             .describe()
             .to_frame("Value"),
-            use_container_width=True
+            width="stretch"
         )
 
     # CORRELATION
@@ -655,7 +625,7 @@ elif page == "❤️ Vital Analytics":
 
         st.plotly_chart(
             fig,
-            use_container_width=True
+            width="stretch"
         )
 
 
@@ -663,10 +633,7 @@ elif page == "❤️ Vital Analytics":
 
 elif page == "🩺 Disease Analytics":
 
-    st.markdown(
-        '<div class="section-title">🩺 Disease Analytics</div>',
-        unsafe_allow_html=True
-    )
+    st.header("Disease analytics")
 
     if DISEASE_COL is None:
 
@@ -701,7 +668,7 @@ elif page == "🩺 Disease Analytics":
 
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                width="stretch"
             )
 
         with col2:
@@ -716,7 +683,7 @@ elif page == "🩺 Disease Analytics":
 
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                width="stretch"
             )
 
         # VITALS BY DISEASE
@@ -749,7 +716,7 @@ elif page == "🩺 Disease Analytics":
 
         st.plotly_chart(
             fig,
-            use_container_width=True
+            width="stretch"
         )
 
         # AVERAGE TABLE
@@ -781,7 +748,7 @@ elif page == "🩺 Disease Analytics":
 
             st.dataframe(
                 disease_summary,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
 
@@ -789,10 +756,7 @@ elif page == "🩺 Disease Analytics":
 
 elif page == "⚠️ Health Alerts":
 
-    st.markdown(
-        '<div class="section-title">⚠️ Health Alerts & Monitoring</div>',
-        unsafe_allow_html=True
-    )
+    st.header("Health alerts and monitoring")
 
     st.info(
         "Alerts shown here are the alert classifications "
@@ -831,14 +795,14 @@ elif page == "⚠️ Health Alerts":
 
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                width="stretch"
             )
 
         with col2:
 
             st.dataframe(
                 fall_counts,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
 
@@ -906,12 +870,12 @@ elif page == "⚠️ Health Alerts":
 
         st.plotly_chart(
             fig,
-            use_container_width=True
+            width="stretch"
         )
 
         st.dataframe(
             alert_counts,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -925,10 +889,7 @@ elif page == "⚠️ Health Alerts":
 
 elif page == "🤖 ML Prediction":
 
-    st.markdown(
-        '<div class="section-title">🤖 Machine Learning Prediction</div>',
-        unsafe_allow_html=True
-    )
+    st.header("Machine learning prediction")
 
     st.info(
         "The prediction is generated by the trained Random Forest "
@@ -936,14 +897,20 @@ elif page == "🤖 ML Prediction":
         "and is not a medical diagnosis."
     )
 
-    if not os.path.exists(MODEL_PATH):
+    has_model_source = MODEL_PATH.is_file() or bool(
+        get_deployment_setting("MODEL_URL")
+        and get_deployment_setting("MODEL_SHA256")
+    )
+
+    if not has_model_source:
 
         st.warning(
-            "Random Forest model is not available yet."
+            "Prediction model is not configured for this deployment."
         )
 
         st.write(
-            "Place random_forest_model.pkl inside the model folder."
+            "Add MODEL_URL and MODEL_SHA256 to Streamlit secrets, or place "
+            "random_forest_model.pkl inside the model folder."
         )
 
     else:
@@ -1003,7 +970,7 @@ elif page == "🤖 ML Prediction":
         predict = st.button(
             "🔮 Generate Prediction",
             type="primary",
-            use_container_width=True
+            width="stretch"
         )
 
         if predict:
@@ -1016,18 +983,14 @@ elif page == "🤖 ML Prediction":
 
                     model, features = load_ml_model()
 
-                    patient_data = pd.DataFrame(
-                        {
-                        "Heart Rate (bpm)": [heart_rate],
-                        "SpO2 Level (%)": [spo2],
-                        "Systolic Blood Pressure (mmHg)": [systolic_bp],
-                        "Diastolic Blood Pressure (mmHg)": [diastolic_bp],
-                        "Body Temperature (°C)": [temperature]
-                        }
-                                                )
-
-                    # Ensure correct feature order
-                    patient_data = patient_data[features]
+                    input_values = {
+                        "Heart Rate (bpm)": heart_rate,
+                        "SpO2 Level (%)": spo2,
+                        "Systolic Blood Pressure (mmHg)": systolic_bp,
+                        "Diastolic Blood Pressure (mmHg)": diastolic_bp,
+                        "Body Temperature (°C)": temperature,
+                    }
+                    patient_data = build_prediction_frame(input_values, features)
 
                     prediction = model.predict(
                         patient_data
@@ -1113,12 +1076,12 @@ elif page == "🤖 ML Prediction":
 
                     st.plotly_chart(
                         fig,
-                        use_container_width=True
+                        width="stretch"
                     )
 
                     st.dataframe(
                         probability_df,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
 
@@ -1146,17 +1109,14 @@ elif page == "🤖 ML Prediction":
 
                     st.plotly_chart(
                         fig,
-                        use_container_width=True
+                        width="stretch"
                     )
 
-                except Exception as error:
-
+                except Exception:
+                    LOGGER.exception("Prediction could not be generated")
                     st.error(
-                        "Prediction could not be generated."
-                    )
-
-                    st.code(
-                        str(error)
+                        "Prediction could not be generated. Check that the model "
+                        "and feature files are valid, then try again."
                     )
 
 
@@ -1164,10 +1124,7 @@ elif page == "🤖 ML Prediction":
 
 elif page == "📋 Dataset Explorer":
 
-    st.markdown(
-        '<div class="section-title">📋 Dataset Explorer</div>',
-        unsafe_allow_html=True
-    )
+    st.header("Dataset explorer")
 
     st.write(
         "Explore the underlying patient healthcare dataset."
@@ -1177,7 +1134,7 @@ elif page == "📋 Dataset Explorer":
     # DATASET INFORMATION
     # --------------------------------------------------------
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
 
     c1.metric(
         "Rows",
@@ -1194,13 +1151,42 @@ elif page == "📋 Dataset Explorer":
         int(filtered_df.duplicated().sum())
     )
 
+    if ACCURACY_COL:
+        c4.metric(
+            "Mean Data Accuracy",
+            f"{filtered_df[ACCURACY_COL].mean():.1f}%"
+        )
+
     st.markdown("---")
 
     st.subheader("Patient Records")
 
+    page_size = st.selectbox(
+        "Rows per page",
+        [50, 100, 250, 500],
+        index=1,
+    )
+    page_count = max(1, (len(filtered_df) + page_size - 1) // page_size)
+    page_number = st.number_input(
+        "Page number",
+        min_value=1,
+        max_value=page_count,
+        value=1,
+        step=1,
+    )
+    first_row = (page_number - 1) * page_size
+    last_row = min(first_row + page_size, len(filtered_df))
+    if len(filtered_df):
+        st.caption(
+            f"Showing rows {first_row + 1:,}-{last_row:,} "
+            f"of {len(filtered_df):,}"
+        )
+    else:
+        st.info("No patient records match the selected filters.")
+
     st.dataframe(
-        filtered_df,
-        use_container_width=True,
+        paginate_frame(filtered_df, page_number, page_size),
+        width="stretch",
         height=500
     )
 
@@ -1227,7 +1213,7 @@ elif page == "📋 Dataset Explorer":
 
     st.dataframe(
         missing,
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
@@ -1236,16 +1222,6 @@ elif page == "📋 Dataset Explorer":
 
 st.markdown("---")
 
-st.markdown(
-    """
-    <div class="footer">
-    Patient Healthcare Intelligence<br>
-    <small>
-    <i>Turning Patient Data into Actionable Insights</i>
-    </small><br>
-    <strong>Designed & Developed by Aman Chaurasiya</strong> • Data Science & Machine Learning • Data Analytics<br>
-    <small>© 2026 Aman Chaurasiya. All Rights Reserved. Unauthorized reproduction or distribution is prohibited.</small><br>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.subheader("Patient healthcare intelligence")
+st.caption("Turning patient data into actionable insights")
+st.caption("Designed and developed by Aman Chaurasiya | Data science, machine learning, and analytics")

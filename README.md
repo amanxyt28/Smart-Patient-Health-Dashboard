@@ -1,46 +1,55 @@
-# 🏥 Smart Patient Health Dashboard
+# Patient Health Record Dashboard
 
-## 🚀 Live Demo
+A Streamlit dashboard for exploring patient records, summarizing vital signs, reviewing health alerts, and generating academic Random Forest predictions.
 
-🌐 **[Click Here to View Live Dashboard](https://amanxyt28-smart-patient-health-dashboard-app-lycgdd.streamlit.app)**
+## Features
 
-## 📌 Project Overview
+- Patient, disease, vital-sign, and alert views
+- Interactive filtering and dataset quality summaries
+- Exact patient-number search and paginated browsing for large datasets
+- Data accuracy summary alongside duplicate and missing-value checks
+- Random Forest predictions with class probabilities and feature importance
+- A visible disclaimer that model output is not a medical diagnosis
 
-A data-driven healthcare analytics and monitoring system that provides interactive patient insights, vital statistics visualization, disease analysis, health alerts, and predictive modeling using Machine Learning.
+## Run locally
 
-## ✨ Key Features
+Use Python 3.11 or newer. From the project directory:
 
-- 📊 Interactive Healthcare Dashboard
-- 👨‍⚕️ Patient Record Explorer
-- ❤️ Vital Signs Analytics
-- 🩺 Disease Distribution and Analysis
-- ⚠️ Health Alerts and Monitoring
-- 🤖 Machine Learning-Based Prediction
-- 📁 Dataset Explorer
+```powershell
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
 
-## 🛠️ Technologies Used
+The app reads the spreadsheet from `data/` and the model artifacts from `model/`, regardless of the current working directory.
 
-- Python
-- Streamlit
-- Pandas and NumPy
-- Plotly
-- Scikit-learn
-- Joblib
+## Deploy on Streamlit Community Cloud
 
-## 💻 Installation and Setup
+1. Push the repository to GitHub. The dataset and small feature list are included; the 699 MB `random_forest_model.pkl` and local Streamlit secrets are excluded by `.gitignore`.
+2. Upload `model/random_forest_model.pkl` to a trusted HTTPS object-storage location. Keep the URL stable and accessible to the app.
+3. Calculate the artifact checksum locally:
 
-1. Clone the repository:
-   `git clone https://github.com/amanxyt28/Smart-Patient-Health-Dashboard.git`
+	```powershell
+	Get-FileHash .\model\random_forest_model.pkl -Algorithm SHA256
+	```
 
-2. Navigate to the project folder:
-   `cd Smart-Patient-Health-Dashboard`
+4. Create the Streamlit Community Cloud app from the repository with `app.py` as the entry point.
+5. In the app's **Settings > Secrets**, add the model URL and checksum:
 
-3. Install dependencies:
-   `pip install -r requirements.txt`
+	```toml
+	MODEL_URL = "https://your-trusted-storage.example/model.pkl"
+	MODEL_SHA256 = "paste-the-64-character-sha256-value-here"
+	```
 
-4. Run the application:
-   `streamlit run app.py`
+The model downloads only when a prediction is requested, then is cached in the app's temporary storage. Downloads require HTTPS, are limited to 1 GiB, and are rejected if the SHA-256 checksum differs. The hosting environment still needs enough memory to load the model. The bundled model is pickle-based, so only host and load artifacts from a source you trust.
 
-## 👨‍💻 Author
+## Tests
 
-GitHub: [@amanxyt28](https://github.com/amanxyt28)
+Run the unit tests and section-level Streamlit smoke tests with:
+
+```powershell
+python -m unittest discover -v
+```
+
+## Model and data safety
+
+The `.pkl` model files are Python pickle-based artifacts. Only use model files from a trusted source; loading an untrusted pickle can execute code. Keep patient data private and do not treat model predictions as clinical advice. Install a scikit-learn version compatible with the one used to train the bundled model if model loading reports a version warning or error.

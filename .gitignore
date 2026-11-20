@@ -1,1 +1,8 @@
-model\random_forest_model.pkl
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
+.playwright/
+.claude/
+__pycache__/
+*.py[cod]
+model/random_forest_model.pkl
+.streamlit/secrets.toml
